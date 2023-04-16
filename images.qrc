@@ -1,0 +1,11 @@
+<!DOCTYPE RCC>
+<RCC version="1.0">
+    <qresource>
+    <file>black_cell.png</file>
+    <file>white_cell.png</file>
+    <file>black_cell2.png</file>
+    <file>white_cell2.png</file>
+    <file>pieces2.png</file>
+    <file>pieces.png</file>
+    </qresource>
+</RCC>
