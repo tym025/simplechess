@@ -644,11 +644,12 @@ class ConfigDialog(QDialog):
         self.cursor = self.conn.cursor()
 
         # create the moves table if it does not exist
-        self.cursor.execute("CREATE TABLE IF NOT EXISTS moves (id INTEGER PRIMARY KEY, move TEXT)")
+        self.cursor.execute("CREATE TABLE IF NOT EXISTS moves (id INTEGER PRIMARY KEY, moves TEXT)")
 
         # insert each move into the moves table
         for move in self.game.moves:
-            self.cursor.execute("INSERT INTO moves (move) VALUES (?)", (move,))
+            print(f"Inserting move: {move}")
+            self.cursor.execute("INSERT INTO moves (moves) VALUES (?)", (move,))
 
         # debug: print the number of rows affected by the INSERT statement
         print(f"Number of rows affected: {self.cursor.rowcount}")
@@ -659,7 +660,7 @@ class ConfigDialog(QDialog):
     def load_moves_from_file(self):
         # open a file dialog to select the file
         file_dialog = QFileDialog(self)
-        file_dialog.setNameFilter("Text files (*.txt *.json *.xml);;All files (*.*)")
+        file_dialog.setNameFilter("Database files (*.db *.sqlite *.sqlite3);;XML files (*.xml);;All files (*.*)")
         file_dialog.setFileMode(QFileDialog.ExistingFile)
         if file_dialog.exec_() == QDialog.Accepted:
             file_path = file_dialog.selectedFiles()[0]
@@ -670,13 +671,12 @@ class ConfigDialog(QDialog):
 
         # read the moves from the file, depending on the file extension
         _, file_extension = os.path.splitext(file_path)
-        if file_extension == ".txt":
-            with open(file_path, "r") as f:
-                tempmoves = f.read().splitlines()
-        elif file_extension == ".json":
-            with open(file_path, "r") as f:
-                moves_dict = json.load(f)
-                tempmoves = moves_dict["moves"]
+        if file_extension in [".db", ".sqlite", ".sqlite3"]:
+            conn = sqlite3.connect(file_path)
+            cursor = conn.cursor()
+            cursor.execute("SELECT moves FROM moves")
+            rows = cursor.fetchall()
+            tempmoves = [row[0] for row in rows]
         elif file_extension == ".xml":
             tree = ET.parse(file_path)
             root = tree.getroot()
@@ -691,13 +691,22 @@ class ConfigDialog(QDialog):
         self.game.activeClock = "white"
         self.game.turn = "white"
 
-        for notation in tempmoves:
-            print(notation)
+        self.moves_iter = iter(tempmoves)
+
+        self.timer = QTimer()
+        self.timer.timeout.connect(self.move_piece)
+        self.timer.start(300)
+
+    def move_piece(self):
+        try:
+            notation = next(self.moves_iter)
             self.game.moveByChessNotation(notation)
             self.game.activeClock = "black" if self.game.activeClock is "white" else "white"
+            self.game.board.update()
             self.game.swapClocks()
+        except StopIteration:
+            self.timer.stop()
 
-        print(tempmoves)
 
 class PromotionDialog(QDialog):
     def __init__(self, color, board):
