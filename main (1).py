@@ -7,6 +7,9 @@ import json
 import xml.etree.ElementTree as ET
 import sqlite3
 import images_rc
+import chess
+import numpy as np
+from tensorflow import keras
 
 class Board(QGraphicsScene):
     def __init__(self, game, parent=None):
@@ -239,6 +242,9 @@ class Piece(QGraphicsPixmapItem):
         self.squares[self.x][self.y] = self.id
 
     def movePiece(self, newX, newY):
+        print(self.board.game.turn )
+        print(self.board.game.activeClock)
+        print(self.color)
         if self.board.isInBoard(newX, newY) and self.isInMoves(newX, newY) and self.color ==  self.board.game.turn and self.color ==  self.board.game.activeClock:
             self.board.enPassantSquare = (-1,-1)
             destPiece = self.board.getPieceAt(newX, newY)
@@ -764,6 +770,7 @@ class ChessGame():
         self.turn_label = QLabel("Start", self.window)
         self.players = "2player"
         self.ip_address = ""
+        self.model = keras.models.load_model("model.h5")
 
         self.load_config()
         self.setupLineEdit()
@@ -877,20 +884,75 @@ class ChessGame():
             elif(moveNot == ('e1c1' or 'e8c8')): moveNot = '0-0-0'
             if(recording): self.moves.append(moveNot)
             print(self.moves)
+            return True
+        return False
+
+    def makeAIMove(self):
+        # Define board state encoding function
+        def encode_board(board):
+            # Use a 12x8x8 array to represent the board state
+            # Each of the 12 planes corresponds to a piece type and color
+            # 0-5 for white pawn, knight, bishop, rook, queen, king
+            # 6-11 for black pawn, knight, bishop, rook, queen, king
+            # A 1 on a plane means that piece is on that square
+            # A 0 means it is not
+            encoding = np.zeros((12, 8, 8), dtype=np.int8)
+            pieces = board.piece_map()
+            for i in range(64):
+                if i in pieces:
+                    piece = pieces[i]
+                    row = i // 8
+                    col = i % 8
+                    plane = piece.piece_type - 1 + (piece.color == chess.BLACK) * 6
+                    encoding[plane, row, col] = 1
+            return encoding
+
+        def decode_move(encoding, n):
+            # Decode the move from the 3x8x8 array representation
+            print(n)
+            from_square = np.argpartition(encoding[0], -n, axis=None)[-n]
+            to_square = np.argpartition(encoding[1], -n, axis=None)[-n]
+            promotion = 0
+            return chess.Move(from_square, to_square, promotion=promotion)
+
+        # Create a new board with the standard initial position
+
+        board = chess.Board()
+        for move in self.moves:
+            board.push_san(move)
+
+        board_state = encode_board(board)
+
+        # Predict the next move
+        move_encoding = self.model.predict(board_state.reshape(1, 12, 8, 8))
+
+        # Decode the move
+        i = 1
+        while True:
+            move = decode_move(move_encoding.reshape(3, 8, 8), i)
+            print(str(move))
+            if self.moveByChessNotation(str(move)):
+                break
+            i += 1
+
+        self.activeClock = "white" if self.activeClock == "black" else "black"
+        self.swapClocks(ai=True)
 
     def bestMove(self):
         self.stockfish.set_position(self.moves)
         best_move = self.stockfish.get_best_move()
         self.moveByChessNotation(best_move)
 
-    def swapClocks(self):
+    def swapClocks(self, ai=False):
         if self.activeClock == "white":
             self.clockWhite.count = True
             self.clockBlack.count = False
         else:
             self.clockWhite.count = False
             self.clockBlack.count = True
-        
+            if(self.players == "1player" and not ai):
+                self.makeAIMove()
+
         self.turn_label.setText(self.activeClock.capitalize())
 
     def moveByChessNotation(self, notation):
@@ -909,7 +971,8 @@ class ChessGame():
                 start = (ord(notation[0]) - 97, int(notation[1]) - 1)
                 end = (ord(notation[2]) - 97, int(notation[3]) - 1)
                 piece = self.board.getPieceAt(start[0], 7-start[1])
-                print(f'{piece.color} {piece.type}')
+                if(piece is None):
+                    return False
         elif notation == "O-O" or notation == "o-o" or notation == "0-0":
         # Kingside castle
             if self.turn == "black":
@@ -919,6 +982,8 @@ class ChessGame():
                 start = (4, 0)
                 end = (6, 0)
             piece = self.board.getPieceAt(start[0], 7-start[1])
+            if(piece is None):
+                return False
         elif notation == "O-O-O"  or notation == "o-o-o" or notation == "0-0-0":
             # Queenside castle
             if self.turn == "black":
@@ -928,6 +993,8 @@ class ChessGame():
                 start = (4, 0)
                 end = (2, 0)
             piece = self.board.getPieceAt(start[0], 7-start[1])
+            if(piece is None):
+                return False
         elif len(notation) == 2:
             end = (ord(notation[0]) - 97, int(notation[1]) - 1)
             piece = None
@@ -936,17 +1003,18 @@ class ChessGame():
                 piece = candidates[0]
             elif len(candidates) > 1:
                 print("Ruch niejednoznaczny")
-                return
+                return False
             else:
                 print("Brak pasującej figury")
-                return
+                return False
         else:
             print("Nieprawidłowa notacja")
-            return
+            return False
 
         
-        self.makeMove(piece, end[0], 7-end[1])
+        if(not self.makeMove(piece, end[0], 7-end[1])): return False
         self.lineEdit.setText("")
+        return True
 
     def getSpriteIndex(self, piece=None, color=None, type=None):
         if piece is not None:
